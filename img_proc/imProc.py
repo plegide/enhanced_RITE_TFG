@@ -5,6 +5,26 @@ from scipy.interpolate import griddata
 from scipy.optimize import least_squares
 from skimage.morphology import skeletonize
 
+
+def binarize_image(image):
+    """
+    Converts a color or grayscale image to binary format.
+    
+    Parameters:
+    -----------
+    image: np.array
+        Input image (can be RGB or grayscale)
+        
+    Returns:
+    --------
+    binary_image: np.array
+        Binary image (True for vessel pixels, False for background)
+    """
+    if image.ndim == 3:
+        image = np.mean(image, axis=-1)
+    return image > 0
+
+
 def extract_vessel_centerlines(vessel_map):
     """
     Extracts vessel centerlines and calculates offsets and caliber.
@@ -133,6 +153,55 @@ def extract_vessel_centerlines_highRes(vessel_map, scale_factor):
     return centerline_map_hr, x_offset_hr, y_offset_hr, caliber_map_hr
 
 
+def extract_vessel_centers_local_maxima(vessel_map):
+    """
+    Extracts vessel centers using distance transform and local maxima detection.
+    
+    Parameters:
+    -----------
+    vessel_map: np.array (2D)
+        Binary image with segmented vessels (1: vessel, 0: background)
+        
+    Returns:
+    --------
+    centers: np.array (2D)
+        Binary map with vessel centers (1: center, 0: background)
+    distance_map: np.array (2D)
+        Distance transform map
+    """
+    # Ensure binary input
+    if vessel_map.ndim == 3:
+        vessel_map = np.mean(vessel_map, axis=-1)
+    vessel_map = vessel_map > 0
+    
+       # indices[0] = eje y, indices[1] = eje x
+    distance_map, indices = distance_transform_edt(vessel_map, return_indices=True)
+    
+    # Non-maximum suppression
+    centerline_map = np.zeros_like(vessel_map, dtype=bool)
+    for y in range(1, distance_map.shape[0] - 1):
+        for x in range(1, distance_map.shape[1] - 1):
+            local_patch = distance_map[y-1:y+2, x-1:x+2]
+            if distance_map[y, x] == np.max(local_patch) and distance_map[y, x] > 0:
+                centerline_map[y, x] = True
+
+    # SUBPLOTS
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    axes[0].imshow(vessel_map, cmap='gray')
+    axes[0].set_title('Binary Vessel Map')
+
+    im = axes[1].imshow(distance_map, cmap='viridis')
+    fig.colorbar(im, ax=axes[1])
+    axes[1].set_title('Distance Transform')
+
+    axes[2].imshow(centerline_map, cmap='gray')
+    axes[2].set_title('Centerline Map')
+
+    plt.tight_layout()
+    plt.show()
+    
+
+
 def gradient_ascent(distance_map, x, y, step_size=1/9, max_iter=100):
     """
     Performs gradient ascent using convolution kernels to find the local maximum.
@@ -181,6 +250,7 @@ def gradient_ascent(distance_map, x, y, step_size=1/9, max_iter=100):
         
     return x, y
 
+
 def quadratic_fit_max(distance_map, x, y):
     """
     Fits a quadratic function to local neighborhood and finds maximum analytically.
@@ -227,6 +297,7 @@ def quadratic_fit_max(distance_map, x, y):
     
     return x, y
 
+
 def interpolated_centerlines(vessel_map):
     """
     Extracts vessel centerlines using both gradient ascent and quadratic fitting methods.
@@ -266,6 +337,22 @@ def interpolated_centerlines(vessel_map):
                 x_quad, y_quad = quadratic_fit_max(distance_map, x, y)
                 maxima_quadratic[y_quad, x_quad] = True
 
-    return maxima_gradient, maxima_quadratic, distance_map
+    # SUBPLOTS
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    
+    axes[0].imshow(vessel_map, cmap='gray')
+    axes[0].set_title('Original Vessel Map')
+    
+    axes[1].imshow(distance_map, cmap='viridis')
+    axes[1].set_title('Distance Transform')
+    
+    axes[2].imshow(maxima_gradient, cmap='gray')
+    axes[2].set_title('Gradient Ascent Maxima')
+    
+    axes[3].imshow(maxima_quadratic, cmap='gray')
+    axes[3].set_title('Quadratic Fit Maxima')
+    
+    plt.tight_layout()
+    plt.show()
 
-
+    return maxima_gradient, maxima_quadratic
