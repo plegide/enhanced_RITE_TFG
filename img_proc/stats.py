@@ -1,12 +1,17 @@
-import numpy as np
-from skimage.morphology import skeletonize
-from scipy.ndimage import distance_transform_edt, zoom
-from scipy.interpolate import griddata
 import matplotlib.pyplot as plt
-from imProc import interpolated_centerlines
+import numpy as np
+from tabulate import tabulate
 
 
-def compare_maximum_methods(vessel_map):
+def dice_coefficient(y_true, y_pred):
+    """
+    Calculate DICE coefficient between two binary masks
+    """
+    intersection = np.sum(y_true * y_pred)
+    return (2. * intersection) / (np.sum(y_true) + np.sum(y_pred))
+
+
+def compare_maximum_methods(vessel_map, maxima_gradient, maxima_quadratic):
     """
     Compares gradient ascent and quadratic fitting methods.
     
@@ -15,25 +20,18 @@ def compare_maximum_methods(vessel_map):
     vessel_map: np.array
         Input image (can be RGB or grayscale)
     """
-    # Get results from interpolated_centerlines
-    maxima_gradient, maxima_quadratic, distance_map = interpolated_centerlines(vessel_map)
     
-    # Visualization
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    # Calculate DICE coefficients
+    dice_gradient = dice_coefficient(vessel_map, maxima_gradient)
+    dice_quadratic = dice_coefficient(vessel_map, maxima_quadratic)
     
-    axes[0].imshow(vessel_map, cmap='gray')
-    axes[0].set_title('Original Vessel Map')
+    # Create comparison table using tabulate
+    headers = ["Method", "DICE Score"]
+    table_data = [
+        ["Gradient Ascent", f"{dice_gradient:.4f}"],
+        ["Quadratic Fitting", f"{dice_quadratic:.4f}"]
+    ]
     
-    axes[1].imshow(distance_map, cmap='viridis')
-    axes[1].set_title('Distance Transform')
+    print("\nMethod Comparison Results")
+    print(tabulate(table_data, headers=headers, tablefmt="fancy_grid"))
     
-    axes[2].imshow(maxima_gradient, cmap='gray')
-    axes[2].set_title('Gradient Ascent Maxima')
-    
-    axes[3].imshow(maxima_quadratic, cmap='gray')
-    axes[3].set_title('Quadratic Fit Maxima')
-    
-    plt.tight_layout()
-    plt.show()
-    
-    return maxima_gradient, maxima_quadratic
