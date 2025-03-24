@@ -25,334 +25,164 @@ def binarize_image(image):
     return image > 0
 
 
-def extract_vessel_centerlines(vessel_map):
+
+def extract_vessel_centers_local_maxima(distance_map):
     """
-    Extracts vessel centerlines and calculates offsets and caliber.
-
-    Parameters:
-    -----------
-    - vessel_map: np.array (2D) -> Binary image with segmented vessels (1: vessel, 0: background)
-
-    Returns:
-    --------
-    - centerline_map: np.array (2D) -> Binary skeleton of the vessels
-    - x_offset: np.array (2D) -> X displacement map to the nearest center
-    - y_offset: np.array (2D) -> Y displacement map to the nearest center
-    - caliber_map: np.array (2D) -> Vessel caliber based on the distance transform
-    """
-
-    if vessel_map.ndim == 3:
-        vessel_map = np.mean(vessel_map, axis=-1)
-    vessel_map = vessel_map > 0 
-
-    centerline_map = skeletonize(vessel_map) #Centros de vaso
-
-    # indices[0] = eje y, indices[1] = eje x
-    distance_map, indices = distance_transform_edt(vessel_map, return_indices=True)
-
-    y_indices, x_indices = np.indices(centerline_map.shape)
-    y_offset = indices[0] - y_indices
-    x_offset = indices[1] - x_indices
-    
-    caliber_map = np.zeros_like(vessel_map, dtype=np.float32)
-    caliber_map[centerline_map] = distance_map[centerline_map] * 2 # el calibre es la distancia x 2
-
-    # SUBPLOTS
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes[0, 0].imshow(vessel_map, cmap='gray')
-    axes[0, 0].set_title('Binary Vessel Map')
-
-    axes[0, 1].imshow(centerline_map, cmap='gray')
-    axes[0, 1].set_title('Centerline Map')
-
-    im = axes[0, 2].imshow(distance_map, cmap='viridis')
-    fig.colorbar(im, ax=axes[0, 2])
-    axes[0, 2].set_title('Distance Transform')
-
-    im = axes[1, 0].imshow(x_offset, cmap='coolwarm', vmin=-np.max(np.abs(x_offset)), vmax=np.max(np.abs(x_offset)))
-    fig.colorbar(im, ax=axes[1, 0])
-    axes[1, 0].set_title('X Offset Map')
-
-    im = axes[1, 1].imshow(y_offset, cmap='coolwarm', vmin=-np.max(np.abs(y_offset)), vmax=np.max(np.abs(y_offset)))
-    fig.colorbar(im, ax=axes[1, 1])
-    axes[1, 1].set_title('Y Offset Map')
-
-    im = axes[1, 2].imshow(caliber_map, cmap='magma')
-    fig.colorbar(im, ax=axes[1, 2])
-    axes[1, 2].set_title('Caliber Map')
-
-    plt.tight_layout()
-    plt.show()
-
-    return centerline_map, x_offset, y_offset, caliber_map
-
-
-def extract_vessel_centerlines_highRes(vessel_map, scale_factor):
-    """
-    Extracts vessel centerlines and calculates offsets and caliber with higher precision.
-
-    Parameters:
-    -----------
-    - vessel_map: np.array (2D) -> Binary image with segmented vessels (1: vessel, 0: background)
-    - scale_factor: int -> Scaling factor to increase resolution before processing (default: 2)
-
-    Returns:
-    --------
-    - centerline_map: np.array (2D) -> Binary skeleton of the vessels
-    - x_offset: np.array (2D) -> X displacement map to the nearest center
-    - y_offset: np.array (2D) -> Y displacement map to the nearest center
-    - caliber_map: np.array (2D) -> Vessel caliber based on the distance transform
-    """
-
-    if vessel_map.ndim == 3:
-        vessel_map = np.mean(vessel_map, axis=-1)
-    vessel_map = vessel_map > 0 
-
-    # Increase image resolution to obtain subpixel center coordinates
-    vessel_map_hr = zoom(vessel_map.astype(float), scale_factor, order=1) > 0
-
-    centerline_map_hr = skeletonize(vessel_map_hr)
-
-    distance_map_hr, indices_hr = distance_transform_edt(vessel_map_hr, return_indices=True)
-
-    y_indices_hr, x_indices_hr = np.indices(centerline_map_hr.shape)
-    y_offset_hr = indices_hr[0] - y_indices_hr
-    x_offset_hr = indices_hr[1] - x_indices_hr
-
-    caliber_map_hr = np.zeros_like(vessel_map_hr, dtype=np.float32)
-    caliber_map_hr[centerline_map_hr] = distance_map_hr[centerline_map_hr] * 2
-
-
-    # SUBPLOTS
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes[0, 0].imshow(vessel_map, cmap='gray')
-    axes[0, 0].set_title('Binary Vessel Map')
-
-    axes[0, 1].imshow(centerline_map_hr, cmap='gray')
-    axes[0, 1].set_title('Centerline Map')
-
-    im = axes[0, 2].imshow(distance_map_hr, cmap='viridis')
-    fig.colorbar(im, ax=axes[0, 2])
-    axes[0, 2].set_title('Distance Transform')
-
-    im = axes[1, 0].imshow(x_offset_hr, cmap='coolwarm', vmin=-np.max(np.abs(x_offset_hr)), vmax=np.max(np.abs(x_offset_hr)))
-    fig.colorbar(im, ax=axes[1, 0])
-    axes[1, 0].set_title('X Offset Map')
-
-    im = axes[1, 1].imshow(y_offset_hr, cmap='coolwarm', vmin=-np.max(np.abs(y_offset_hr)), vmax=np.max(np.abs(y_offset_hr)))
-    fig.colorbar(im, ax=axes[1, 1])
-    axes[1, 1].set_title('Y Offset Map')
-
-    im = axes[1, 2].imshow(caliber_map_hr, cmap='magma')
-    fig.colorbar(im, ax=axes[1, 2])
-    axes[1, 2].set_title('Caliber Map')
-
-    plt.tight_layout()
-    plt.show()
-
-    return centerline_map_hr, x_offset_hr, y_offset_hr, caliber_map_hr
-
-
-def extract_vessel_centers_local_maxima(vessel_map):
-    """
-    Extracts vessel centers using distance transform and local maxima detection.
+    Extracts vessel centers from the distance map using non-maximum suppression.
     
     Parameters:
     -----------
-    vessel_map: np.array (2D)
-        Binary image with segmented vessels (1: vessel, 0: background)
+    distance_map: np.array (2D)
+        Distance transform map
         
     Returns:
     --------
-    centers: np.array (2D)
-        Binary map with vessel centers (1: center, 0: background)
-    distance_map: np.array (2D)
-        Distance transform map
+    centerline_map: np.array (2D, bool)
+        Binary map with vessel centers (True: center, False: background)
     """
-    # Ensure binary input
-    if vessel_map.ndim == 3:
-        vessel_map = np.mean(vessel_map, axis=-1)
-    vessel_map = vessel_map > 0
-    
-       # indices[0] = eje y, indices[1] = eje x
-    distance_map, indices = distance_transform_edt(vessel_map, return_indices=True)
-    
-    # Non-maximum suppression
-    centerline_map = np.zeros_like(vessel_map, dtype=bool)
+    centerline_map = np.zeros_like(distance_map, dtype=bool)
     for y in range(1, distance_map.shape[0] - 1):
         for x in range(1, distance_map.shape[1] - 1):
             local_patch = distance_map[y-1:y+2, x-1:x+2]
             if distance_map[y, x] == np.max(local_patch) and distance_map[y, x] > 0:
                 centerline_map[y, x] = True
-
-    # SUBPLOTS
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    axes[0].imshow(vessel_map, cmap='gray')
-    axes[0].set_title('Binary Vessel Map')
-
-    im = axes[1].imshow(distance_map, cmap='viridis')
-    fig.colorbar(im, ax=axes[1])
-    axes[1].set_title('Distance Transform')
-
-    axes[2].imshow(centerline_map, cmap='gray')
-    axes[2].set_title('Centerline Map')
-
-    plt.tight_layout()
-    plt.show()
     
+    return centerline_map
 
 
-def gradient_ascent(distance_map, x, y, step_size=1/9, max_iter=100):
+def fit_parabola_1d(values):
     """
-    Performs gradient ascent using convolution kernels to find the local maximum.
+    Fits a 1D parabola to one point and its two neighbors and finds the subpixel maximum location
+
+    Parameters:
+    -----------
+    values: array-like
+        Three values [f(-1), f(0), f(1)] representing the function values at 
+        x = -1, x = 0, and x = 1, respectively.
+        
+    Returns:
+    --------
+    x_max: float
+        Subpixel offset from the center (x=0) where the maximum occurs.
+    max_value: float
+        Interpolated maximum value of the parabola at x_max.
+    """
+    # Unpack values in center and neighbors
+    f_minus, f_center, f_plus = values
+    
+    # Solve for A, B, C
+    A = (f_plus + f_minus - 2*f_center) / 2
+    B = (f_plus - f_minus) / 2
+    C = f_center
+    
+    # Maximum at x = -B/(2A)
+    if A < 0:
+        x_max = -B / (2 * A)
+        max_value = A * x_max * x_max + B * x_max + C  # f(x_max)
+        return x_max, max_value
+
+
+def interpolate_centroid(x, y, indices):
+    """
+    Calculates subpixel vessel center using EDT indices and perpendicular direction.
     
     Parameters:
     -----------
-    distance_map: np.array (2D)
-        Distance transform map
     x, y: int
-        Initial coordinates
-    step_size: float
-        Weight for gradient step (default: 1/9)
-    max_iter: int
-        Maximum number of iterations
+        Coordinates of the maximum point
+    indices: np.array (3D)
+        EDT indices map giving closest boundary point for each pixel
         
     Returns:
     --------
-    x, y: tuple
-        Coordinates of the local maximum
+    center_x, center_y: float
+        Coordinates of the interpolated centroid
+    bx, by: int
+        Coordinates of the closest boundary point
     """
-    # Gradient kernels (central differences)
-    kernel_x = np.array([[-1, -1, -1],
-                        [ 0,  0,  0],
-                        [ 1,  1,  1]]) * step_size
+    # Get closest boundary point (B)
+    by = indices[0, y, x]
+    bx = indices[1, y, x]
     
-    kernel_y = kernel_x.T
+    # Calculate normalized perpendicular vector
+    dx = bx - x
+    dy = by - y
+    length = np.sqrt(dx*dx + dy*dy)
     
-    for _ in range(max_iter):
-        # Get local 3x3 patch
-        patch = distance_map[max(0, y-1):min(y+2, distance_map.shape[0]),
-                           max(0, x-1):min(x+2, distance_map.shape[1])]
-        
-        # Calculate gradients using convolution
-        gx = np.sum(patch * kernel_x[:patch.shape[0], :patch.shape[1]])
-        gy = np.sum(patch * kernel_y[:patch.shape[0], :patch.shape[1]])
-        
-        # Calculate new position
-        x_new = int(round(x + gx))
-        y_new = int(round(y + gy))
-        
-        # Check if we've reached a local maximum
-        if x_new == x and y_new == y:
-            break
-            
-        x, y = x_new, y_new
-        
-    return x, y
+    # Get perpendicular direction
+    perp_x = -dy/length
+    perp_y = dx/length
+    
+    # Get opposite points
+    c1x = int(x + perp_x)
+    c1y = int(y + perp_y)
+    c2x = int(x - perp_x)
+    c2y = int(y - perp_y)
+    
+    # Get their closest boundary points
+    c1bx = indices[1, c1y, c1x]
+    c1by = indices[0, c1y, c1x]
+    c2bx = indices[1, c2y, c2x]
+    c2by = indices[0, c2y, c2x]
+    
+    # Calculate centroid
+    center_x = (c1bx + c2bx + bx) / 3
+    center_y = (c1by + c2by + by) / 3
+    
+    return center_x, center_y, bx, by
 
 
-def quadratic_fit_max(distance_map, x, y):
+def extract_displacement_map(indices, maxima_map):
     """
-    Fits a quadratic function to local neighborhood and finds maximum analytically.
+    Creates displacement vectors from maxima to their interpolated centers.
     
     Parameters:
     -----------
-    distance_map: np.array (2D)
-        Distance transform map
-    x, y: int
-        Center coordinates
+    indices: np.array (3D)
+        EDT indices map giving closest boundary point for each pixel
+    maxima_map: np.array (2D)
+        Binary map of maxima positions
         
     Returns:
     --------
-    x, y: tuple
-        Coordinates of the local maximum
+    displacement_map: np.array (2D, 2)
+        Vector field of displacements (dy, dx) for each maximum
     """
-    # Get 3x3 neighborhood points and values
-    neighbors = []
-    values = []
-    dx_list = []
-    dy_list = []
+    # displacement_map is a 3D array where each pixel in the 2D maxima_map has a corresponding 2D vector (dy, dx)
+    displacement_map = np.zeros((*maxima_map.shape, 2), dtype=float) 
     
-    for dy in range(-1, 2):
-        for dx in range(-1, 2):
-            if (0 <= y+dy < distance_map.shape[0] and 
-                0 <= x+dx < distance_map.shape[1]):
-                neighbors.append([dx, dy])
-                values.append(distance_map[y+dy, x+dx])
-                dx_list.append(dx)
-                dy_list.append(dy)
-    
-    # Convert to arrays
-    neighbors = np.array(neighbors)
-    values = np.array(values)
-    
-    # Calculate weighted centroids
-    total_weight = np.sum(values)
-    if total_weight > 0:
-        x_centroid = np.sum(dx_list * values) / total_weight
-        y_centroid = np.sum(dy_list * values) / total_weight
-        
-        # Return offset from original position
-        return int(round(x + x_centroid)), int(round(y + y_centroid))
-    
-    return x, y
+    y_indices, x_indices = np.where(maxima_map)
+    for y, x in zip(y_indices, x_indices):
+        if y > 0 and y < maxima_map.shape[0]-1 and x > 0 and x < maxima_map.shape[1]-1:
+            center_x, center_y, _, _ = interpolate_centroid(x, y, indices)
+            displacement_map[y, x] = [center_y - y, center_x - x] # (dy, dx) for each maximum
+
+    return displacement_map
 
 
-def interpolated_centerlines(vessel_map):
+def calculate_caliber_map(indices, maxima_map):
     """
-    Extracts vessel centerlines using both gradient ascent and quadratic fitting methods.
-
+    Calculates vessel diameters using distances to boundary points.
+    
     Parameters:
     -----------
-    vessel_map: np.array (2D)
-        Binary image with segmented vessels (1: vessel, 0: background)
-
+    indices: np.array (3D)
+        EDT indices map giving closest boundary point for each pixel
+    maxima_map: np.array (2D)
+        Binary map of maxima positions
+        
     Returns:
     --------
-    tuple:
-        - maxima_gradient: np.array (2D) -> Binary map of maxima found by gradient ascent
-        - maxima_quadratic: np.array (2D) -> Binary map of maxima found by quadratic fitting
-        - distance_map: np.array (2D) -> Distance transform map
+    caliber_map: np.array (2D, float)
+        Map of vessel diameters at maximum positions
     """
-    if vessel_map.ndim == 3:
-        vessel_map = np.mean(vessel_map, axis=-1)
-    vessel_map = vessel_map > 0 
-
-    # Distance transform
-    distance_map = distance_transform_edt(vessel_map)
-
-    # Initialize maxima maps
-    maxima_gradient = np.zeros_like(vessel_map, dtype=bool)
-    maxima_quadratic = np.zeros_like(vessel_map, dtype=bool)
-
-    # Find local maxima and apply both methods
-    for y in range(1, distance_map.shape[0] - 1):
-        for x in range(1, distance_map.shape[1] - 1):
-            if distance_map[y, x] > 0:
-                # Apply gradient ascent
-                x_grad, y_grad = gradient_ascent(distance_map, x, y)
-                maxima_gradient[y_grad, x_grad] = True
-
-                # Apply quadratic fitting
-                x_quad, y_quad = quadratic_fit_max(distance_map, x, y)
-                maxima_quadratic[y_quad, x_quad] = True
-
-    # SUBPLOTS
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    caliber_map = np.zeros_like(maxima_map, dtype=float)
+    y_indices, x_indices = np.where(maxima_map)
     
-    axes[0].imshow(vessel_map, cmap='gray')
-    axes[0].set_title('Original Vessel Map')
+    for y, x in zip(y_indices, x_indices):
+        if y > 0 and y < maxima_map.shape[0]-1 and x > 0 and x < maxima_map.shape[1]-1:
+            center_x, center_y, bx, by = interpolate_centroid(x, y, indices)
+            caliber = 2 * np.sqrt((center_y - by)**2 + (center_x - bx)**2) # Diameter = 2 * radius
+            caliber_map[y, x] = caliber
     
-    axes[1].imshow(distance_map, cmap='viridis')
-    axes[1].set_title('Distance Transform')
-    
-    axes[2].imshow(maxima_gradient, cmap='gray')
-    axes[2].set_title('Gradient Ascent Maxima')
-    
-    axes[3].imshow(maxima_quadratic, cmap='gray')
-    axes[3].set_title('Quadratic Fit Maxima')
-    
-    plt.tight_layout()
-    plt.show()
-
-    return maxima_gradient, maxima_quadratic
+    return caliber_map
