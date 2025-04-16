@@ -162,27 +162,29 @@ def extract_displacement_map(indices, maxima_map):
 
 def calculate_caliber_map(indices, maxima_map):
     """
-    Calculates vessel diameters using distances to boundary points.
+    Calculates vessel diameters and centroids using distances to boundary points.
     
-    Parameters:
-    -----------
-    indices: np.array (3D)
-        EDT indices map giving closest boundary point for each pixel
-    maxima_map: np.array (2D)
-        Binary map of maxima positions
-        
     Returns:
     --------
+    radius_map: np.array (2D, float)
+        Map of vessel radii at maximum positions
     caliber_map: np.array (2D, float)
         Map of vessel diameters at maximum positions
+    centroids: list of tuples
+        List of (center_x, center_y, boundary_x, boundary_y) for each maximum
     """
     caliber_map = np.zeros_like(maxima_map, dtype=float)
+    radius_map = np.zeros_like(maxima_map, dtype=float)
     y_indices, x_indices = np.where(maxima_map)
+    centroids = []
     
     for y, x in zip(y_indices, x_indices):
         if y > 0 and y < maxima_map.shape[0]-1 and x > 0 and x < maxima_map.shape[1]-1:
             center_x, center_y, bx, by = interpolate_centroid(x, y, indices)
-            caliber = 2 * np.sqrt((center_y - by)**2 + (center_x - bx)**2) # Diameter = 2 * radius
+            radius = np.sqrt((center_y - y)**2 + (center_x - x)**2)
+            radius_map[y, x] = radius
+            caliber = 2 * np.sqrt((center_y - by)**2 + (center_x - bx)**2)
             caliber_map[y, x] = caliber
+            centroids.append((center_x, center_y, bx, by))
     
-    return caliber_map
+    return radius_map, caliber_map, centroids

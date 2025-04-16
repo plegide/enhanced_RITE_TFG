@@ -1,32 +1,36 @@
 from dataLoader import load_images_from_folder
-from imProc import binarize_image, extract_vessel_centers_local_maxima, extract_displacement_map, calculate_caliber_map
+from imProc import (binarize_image, extract_vessel_centers_local_maxima, 
+                   extract_displacement_map, calculate_caliber_map)
+from visualizer import (plot_vessel_calibers_scatter, plot_vessel_displacements_quiver, 
+                       plot_vessel_circles, plot_vessel_maps)
 from scipy.ndimage import distance_transform_edt
 import matplotlib.pyplot as plt
-# Cargar imágenes
-images = load_images_from_folder("/home/plegide/Documents/FIC/4/TFG/data/RITE/training")
+
+# Load images
+images = load_images_from_folder("/home/plegide/Documents/FIC/4/enhanced_RITE_TFG/data/RITE/test/vessel")
 
 if images:
-    image = images[0]  # De momento una imagen
+    image = images[1]
+    
+    # Plot original image
+    plt.figure(figsize=(10, 8))
+    plt.imshow(image, cmap='gray')
+    plt.title('Original Image')
+    plt.axis('off')
+    plt.show()
+    
+    # Process image
     binary_image = binarize_image(image)
     
-    # Calculate EDT with indices
+    # Calculate features
     distance_map, indices = distance_transform_edt(binary_image, return_indices=True)
     maxima_map = extract_vessel_centers_local_maxima(distance_map)
     displacement_map = extract_displacement_map(indices, maxima_map)
-    caliber_map = calculate_caliber_map(indices, maxima_map)
-
-    # Visualization
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    radius_map, caliber_map, centroids = calculate_caliber_map(indices, maxima_map)
     
-    axes[0].imshow(binary_image, cmap='gray')
-    axes[0].set_title('Binarized Vessel Map')
-    
-    axes[1].imshow(distance_map, cmap='viridis')
-    axes[1].set_title('Distance Transform')
-    
-    axes[2].imshow(maxima_map, cmap='gray')
-    axes[2].set_title('Maxima Map')
-
-    plt.tight_layout()
-    plt.show()
+    # Visualize results
+    plot_vessel_maps(distance_map, maxima_map)
+    plot_vessel_calibers_scatter(maxima_map, displacement_map)
+    plot_vessel_displacements_quiver(maxima_map, displacement_map, indices)
+    plot_vessel_circles(radius_map, displacement_map)
 

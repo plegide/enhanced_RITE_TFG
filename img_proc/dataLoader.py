@@ -15,7 +15,7 @@ def load_images_from_folder(path):
     images = []
 
     for filename in os.listdir(path):
-        if "av" in filename.lower() and filename.lower().endswith(('.png')):
+        if filename.lower().endswith(('.png')):
             img_path = os.path.join(path, filename)
             try:
                 img = io.imread(img_path)  # Load image
