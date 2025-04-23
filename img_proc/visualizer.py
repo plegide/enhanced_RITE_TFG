@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+from skimage import io
 
 
 def plot_vessel_calibers_scatter(maxima_map, displacement_map):
@@ -79,12 +81,23 @@ def plot_vessel_displacements_quiver(maxima_map, displacement_map, indices):
     vector_dy = by - y_subpixel
     vector_lengths = np.sqrt(vector_dx**2 + vector_dy**2)
     
+    print(f"Vector lengths: min={vector_lengths.min():.3f}, max={vector_lengths.max():.3f}")
+    print(f"Number of small vectors (<0.1): {np.sum(vector_lengths < 0.1)}")
+    
+    # Filter out very small vectors (e.g., length < 0.1)
+    valid_vectors = vector_lengths > 0.1
+    x_subpixel = x_subpixel[valid_vectors]
+    y_subpixel = y_subpixel[valid_vectors]
+    vector_dx = vector_dx[valid_vectors]
+    vector_dy = vector_dy[valid_vectors]
+    vector_lengths = vector_lengths[valid_vectors]
+    
     # Create figure and axis with black background
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.set_facecolor('black')
     fig.patch.set_facecolor('black')
     
-    # Plot all vectors
+    # Plot filtered vectors
     quiver = ax.quiver(x_subpixel, y_subpixel,
                       vector_dx, vector_dy,
                       vector_lengths,
@@ -181,6 +194,42 @@ def plot_vessel_maps(distance_map, maxima_map):
     axes[1].set_yticks([])
     
     # Adjust layout and display
+    plt.tight_layout()
+    plt.show()
+
+def plot_synthesis_comparison(original_image):
+    """
+    Creates a visual comparison between original vessel map and all synthetic versions.
+    
+    Parameters:
+    -----------
+    original_image: np.array (2D)
+        Original binary vessel map
+    """
+    results_dir = 'results'
+    methods = [d for d in os.listdir(results_dir) 
+              if os.path.exists(os.path.join(results_dir, d, 'synthetic_vessels.png'))]
+    
+    # Create figure with subplots (original + all methods)
+    n_plots = len(methods) + 1
+    fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 5))
+    
+    # Plot original
+    axes[0].imshow(original_image, cmap='gray')
+    axes[0].set_title('Original Vessel Map', color='white')
+    axes[0].set_facecolor('black')
+    axes[0].axis('off')
+    
+    # Plot each synthesis method
+    for i, method in enumerate(methods, 1):
+        synthetic_map = io.imread(os.path.join(results_dir, method, 'synthetic_vessels.png'))
+        axes[i].imshow(synthetic_map, cmap='gray')
+        axes[i].set_title(f'{method.replace("_", " ").title()}', color='white')
+        axes[i].set_facecolor('black')
+        axes[i].axis('off')
+    
+    # Style figure
+    fig.patch.set_facecolor('black')
     plt.tight_layout()
     plt.show()
 
