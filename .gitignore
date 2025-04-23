@@ -178,3 +178,6 @@ data
 
 # VENV
 tfg_env
+
+# RESULTS
+results

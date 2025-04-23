@@ -1,5 +1,6 @@
 import os
 from skimage import io
+import matplotlib.pyplot as plt
 
 def load_images_from_folder(path):
     """
@@ -22,6 +23,30 @@ def load_images_from_folder(path):
                 images.append(img)
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
-                
-    print("AV images loaded")
+
     return images
+
+
+def save_vessel_map(vessel_map, method_name):
+    """
+    Saves the synthesized vessel map in a structured results directory.
+    
+    Parameters:
+    -----------
+    vessel_map: np.array (2D)
+        Binary vessel map
+    method_name: str
+        Name of the synthesis method ('pixels', 'circles', 'distance_field')
+    """
+    # Create base results directory
+    base_dir = 'results'
+    os.makedirs(base_dir, exist_ok=True)
+    
+    # Create method-specific subdirectory
+    method_dir = os.path.join(base_dir, method_name)
+    os.makedirs(method_dir, exist_ok=True)
+    
+    # Save map
+    output_path = os.path.join(method_dir, 'synthetic_vessels.png')
+    plt.imsave(output_path, vessel_map, cmap='gray')
+    print(f"Synthetic vessel map saved to: {output_path}")
