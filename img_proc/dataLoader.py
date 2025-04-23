@@ -46,7 +46,12 @@ def save_vessel_map(vessel_map, method_name):
     method_dir = os.path.join(base_dir, method_name)
     os.makedirs(method_dir, exist_ok=True)
     
+    # Get resolution for filename
+    height, width = vessel_map.shape
+    
+    # Create filename with resolution
+    output_path = os.path.join(method_dir, f'synthetic_vessels_{height}x{width}.png')
+    
     # Save map
-    output_path = os.path.join(method_dir, 'synthetic_vessels.png')
     plt.imsave(output_path, vessel_map, cmap='gray')
     print(f"Synthetic vessel map saved to: {output_path}")

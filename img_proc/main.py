@@ -1,55 +1,46 @@
 from scipy.ndimage import distance_transform_edt
 from dataLoader import load_images_from_folder, save_vessel_map
-from imProc import binarize_image, extract_vessel_centers_local_maxima, extract_displacement_map, calculate_caliber_map
+from imProc import binarize_image, analysis_stage
 from visualizer import plot_vessel_calibers_scatter, plot_vessel_displacements_quiver, plot_vessel_circles, plot_vessel_maps, plot_synthesis_comparison
-from vessel_synthesis import synthesize_vessel_map_pixels, synthesize_vessel_map_circles, synthesize_vessel_map_distance_field
+from vessel_synthesis import synthesize_vessel_map_pixels, synthesize_vessel_map_circles, synthesize_vessel_map_distance_field, synthesis_stage
 from stats import print_synthesis_comparison
 
-# Load images
 images = load_images_from_folder("/home/plegide/Documents/FIC/4/enhanced_RITE_TFG/data/RITE/test/vessel")
 
 if images:
     image = images[1]
-
     binary_image = binarize_image(image)
-    distance_map, indices = distance_transform_edt(binary_image, return_indices=True)
-    maxima_map = extract_vessel_centers_local_maxima(distance_map)
-    displacement_map = extract_displacement_map(indices, maxima_map)
-    radius_map, caliber_map, centroids = calculate_caliber_map(indices, maxima_map)
+        
+    # Analysis with different resolution
+    target_resolution = (128, 128)
+    analysis_results = analysis_stage(binary_image, target_resolution)
     
-    # Plots
+    # Analysis with original resolution
+    # analysis_results = analysis_stage(binary_image)
+    
+    # Extract results from dictionary
+    distance_map = analysis_results['distance_map']
+    maxima_map = analysis_results['maxima_map']
+    displacement_map = analysis_results['displacement_map']
+    radius_map = analysis_results['radius_map']
+    indices = analysis_results['indices']
+    
     plot_vessel_maps(distance_map, maxima_map)
     plot_vessel_calibers_scatter(maxima_map, displacement_map)
     plot_vessel_displacements_quiver(maxima_map, displacement_map, indices)
     # plot_vessel_circles(radius_map, displacement_map)
+        
+    # Synthesis with analysis resolution
+    synthetic_maps = synthesis_stage(analysis_results, methods=['distance_field'])
     
-    # # Synthesis using different methods
-    # synthetic_map_pixels = synthesize_vessel_map_pixels(
-    #     image_shape=binary_image.shape,
-    #     maxima_map=maxima_map,
-    #     displacement_map=displacement_map,
-    #     radius_map=radius_map
-    # )
-    # save_vessel_map(synthetic_map_pixels, 'pixels')
+    # Synthesis with different resolution
+    # synthesis_resolution = (64, 64)
+    # synthetic_maps = synthesis_stage(analysis_results, methods=['distance_field'])
     
-    # synthetic_map_circles = synthesize_vessel_map_circles(
-    #     image_shape=binary_image.shape,
-    #     maxima_map=maxima_map,
-    #     displacement_map=displacement_map,
-    #     radius_map=radius_map
-    # )
-    # save_vessel_map(synthetic_map_circles, 'circles')
+    # Result is saved with reference to the synthesis method and resolution
+    for method, vessel_map in synthetic_maps.items():
+        save_vessel_map(vessel_map, method)
     
-    synthetic_map_distance = synthesize_vessel_map_distance_field(
-        image_shape=binary_image.shape,
-        maxima_map=maxima_map,
-        displacement_map=displacement_map,
-        radius_map=radius_map
-    )
-    save_vessel_map(synthetic_map_distance, 'distance_field')
-
-    
-    # Compare all results
     print_synthesis_comparison(binary_image, maxima_map, displacement_map, indices)
     plot_synthesis_comparison(binary_image)
 
