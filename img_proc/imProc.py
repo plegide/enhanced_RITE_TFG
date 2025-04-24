@@ -10,15 +10,13 @@ def binarize_image(image):
     """
     Converts a color or grayscale image to binary format.
     
-    Parameters:
-    -----------
-    image: np.array
-        Input image (can be RGB or grayscale)
+    Args:
+        image: np.array
+            Input image (can be RGB or grayscale)
         
     Returns:
-    --------
-    binary_image: np.array
-        Binary image (True for vessel pixels, False for background)
+        binary_image: np.array
+            Binary image (True for vessel pixels, False for background)
     """
     if image.ndim == 3:
         image = np.mean(image, axis=-1)
@@ -30,15 +28,13 @@ def extract_vessel_centers_local_maxima(distance_map):
     """
     Extracts vessel centers from the distance map using non-maximum suppression.
     
-    Parameters:
-    -----------
-    distance_map: np.array (2D)
-        Distance transform map
+    Args:
+        distance_map: np.array (2D)
+            Distance transform map
         
     Returns:
-    --------
-    centerline_map: np.array (2D, bool)
-        Binary map with vessel centers (True: center, False: background)
+        centerline_map: np.array (2D, bool)
+            Binary map with vessel centers (True: center, False: background)
     """
     centerline_map = np.zeros_like(distance_map, dtype=bool)
     for y in range(1, distance_map.shape[0] - 1):
@@ -52,20 +48,17 @@ def extract_vessel_centers_local_maxima(distance_map):
 
 def fit_parabola_1d(values):
     """
-    Fits a 1D parabola to one point and its two neighbors and finds the subpixel maximum location
-
-    Parameters:
-    -----------
-    values: array-like
-        Three values [f(-1), f(0), f(1)] representing the function values at 
-        x = -1, x = 0, and x = 1, respectively.
+    Fits a 1D parabola to one point and its two neighbors and finds the subpixel maximum location.
+    
+    Args:
+        values: array-like
+            Three values [f(-1), f(0), f(1)] representing function values at x = -1, 0, 1
         
     Returns:
-    --------
-    x_max: float
-        Subpixel offset from the center (x=0) where the maximum occurs.
-    max_value: float
-        Interpolated maximum value of the parabola at x_max.
+        x_max: float
+            Subpixel offset from the center (x=0) where the maximum occurs
+        max_value: float
+            Interpolated maximum value of the parabola at x_max
     """
     # Unpack values in center and neighbors
     f_minus, f_center, f_plus = values
@@ -86,19 +79,23 @@ def interpolate_centroid(x, y, indices):
     """
     Calculates subpixel vessel center using EDT indices and perpendicular direction.
     
-    Parameters:
-    -----------
-    x, y: int
-        Coordinates of the maximum point
-    indices: np.array (3D)
-        EDT indices map giving closest boundary point for each pixel
+    Args:
+        x: int
+            X-coordinate of the maximum point
+        y: int
+            Y-coordinate of the maximum point
+        indices: np.array (3D)
+            EDT indices map giving closest boundary point for each pixel
         
     Returns:
-    --------
-    center_x, center_y: float
-        Coordinates of the interpolated centroid
-    bx, by: int
-        Coordinates of the closest boundary point
+        center_x: float
+            X-coordinate of the interpolated centroid
+        center_y: float
+            Y-coordinate of the interpolated centroid
+        bx: int
+            X-coordinate of the closest boundary point
+        by: int
+            Y-coordinate of the closest boundary point
     """
     # Get closest boundary point (B)
     by = indices[0, y, x]
@@ -136,17 +133,15 @@ def extract_displacement_map(indices, maxima_map):
     """
     Creates displacement vectors from maxima to their interpolated centers.
     
-    Parameters:
-    -----------
-    indices: np.array (3D)
-        EDT indices map giving closest boundary point for each pixel
-    maxima_map: np.array (2D)
-        Binary map of maxima positions
+    Args:
+        indices: np.array (3D)
+            EDT indices map giving closest boundary point for each pixel
+        maxima_map: np.array (2D)
+            Binary map of maxima positions
         
     Returns:
-    --------
-    displacement_map: np.array (2D, 2)
-        Vector field of displacements (dy, dx) for each maximum
+        displacement_map: np.array (2D, 2)
+            Vector field of displacements (dy, dx) for each maximum
     """
     # displacement_map is a 3D array where each pixel in the 2D maxima_map has a corresponding 2D vector (dy, dx)
     displacement_map = np.zeros((*maxima_map.shape, 2), dtype=float) 
@@ -164,14 +159,19 @@ def calculate_caliber_map(indices, maxima_map):
     """
     Calculates vessel diameters and centroids using distances to boundary points.
     
+    Args:
+        indices: np.array (3D)
+            EDT indices map giving closest boundary point for each pixel
+        maxima_map: np.array (2D)
+            Binary map of maxima positions
+        
     Returns:
-    --------
-    radius_map: np.array (2D, float)
-        Map of vessel radii at maximum positions
-    caliber_map: np.array (2D, float)
-        Map of vessel diameters at maximum positions
-    centroids: list of tuples
-        List of (center_x, center_y, boundary_x, boundary_y) for each maximum
+        radius_map: np.array (2D, float)
+            Map of vessel radii at maximum positions
+        caliber_map: np.array (2D, float)
+            Map of vessel diameters at maximum positions
+        centroids: list of tuple
+            List of (center_x, center_y, boundary_x, boundary_y) for each maximum
     """
     caliber_map = np.zeros_like(maxima_map, dtype=float)
     radius_map = np.zeros_like(maxima_map, dtype=float)
@@ -188,3 +188,67 @@ def calculate_caliber_map(indices, maxima_map):
             centroids.append((center_x, center_y, bx, by))
     
     return radius_map, caliber_map, centroids
+
+
+def analysis_stage(binary_image, target_resolution=None):
+    """
+    Performs vessel analysis at a specified target resolution.
+    
+    Args:
+        binary_image: np.array (2D)
+            Binary vessel map where True indicates vessel presence
+        target_resolution: tuple (height, width) or None
+            Desired output resolution in pixels. If None, uses input image shape
+        
+    Returns:
+        dict: Analysis results containing:
+            distance_map: np.array (2D)
+                Distance transform map at target resolution
+            indices: np.array (3D)
+                EDT indices map giving closest boundary point for each pixel
+            maxima_map: np.array (2D, bool)
+                Binary map of vessel centers at target resolution
+            displacement_map: np.array (3D)
+                Vector field of displacements (dy, dx) for each maximum
+            radius_map: np.array (2D)
+                Map of vessel radii at maximum positions
+            caliber_map: np.array (2D)
+                Map of vessel diameters at maximum positions
+            resolution: tuple (height, width)
+                Resolution of output maps
+    """
+    
+    if target_resolution is None:
+        target_resolution = binary_image.shape
+    
+    # Calculate resize factor
+    zoom_y = target_resolution[0] / binary_image.shape[0]
+    zoom_x = target_resolution[1] / binary_image.shape[1]
+    
+    if zoom_y != 1.0 or zoom_x != 1.0: #
+        resized_image = zoom(binary_image.astype(float), (zoom_y, zoom_x), order=1)
+        resized_image = resized_image > 0.5  # Binarize the image again
+    else:
+        resized_image = binary_image
+    
+    distance_map, indices = distance_transform_edt(resized_image, return_indices=True)
+    maxima_map = extract_vessel_centers_local_maxima(distance_map)
+    displacement_map = extract_displacement_map(indices, maxima_map)
+    radius_map, caliber_map, _ = calculate_caliber_map(indices, maxima_map)
+    
+    # Normalize maps with the new resolution
+    avg_zoom = (zoom_x + zoom_y) / 2
+    distance_map = distance_map / avg_zoom
+    radius_map = radius_map / avg_zoom
+    caliber_map = caliber_map / avg_zoom
+    displacement_map = displacement_map / avg_zoom
+    
+    return {
+        'distance_map': distance_map,
+        'indices': indices,
+        'maxima_map': maxima_map,
+        'displacement_map': displacement_map,
+        'radius_map': radius_map,
+        'caliber_map': caliber_map,
+        'resolution': target_resolution
+    }
