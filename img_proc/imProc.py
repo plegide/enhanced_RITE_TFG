@@ -1,83 +1,64 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import distance_transform_edt, zoom, convolve
-from scipy.interpolate import griddata
-from scipy.optimize import least_squares
-from skimage.morphology import skeletonize
 
 
 def binarize_image(image):
-    """
-    Converts a color or grayscale image to binary format.
-    
-    Args:
-        image: np.array
-            Input image (can be RGB or grayscale)
-        
-    Returns:
-        binary_image: np.array
-            Binary image (True for vessel pixels, False for background)
-    """
+    """Converts image to binary format"""
     if image.ndim == 3:
         image = np.mean(image, axis=-1)
     return image > 0
 
-
-
 def extract_vessel_centers_local_maxima(distance_map):
-    """
-    Extracts vessel centers from the distance map using non-maximum suppression.
-    
-    Args:
-        distance_map: np.array (2D)
-            Distance transform map
-        
-    Returns:
-        centerline_map: np.array (2D, bool)
-            Binary map with vessel centers (True: center, False: background)
-    """
-    centerline_map = np.zeros_like(distance_map, dtype=bool)
+    """Extracts vessel centers using non-maximum suppression on points where the distance map is maximum"""
+    maximum_map = np.zeros_like(distance_map, dtype=bool)
     for y in range(1, distance_map.shape[0] - 1):
         for x in range(1, distance_map.shape[1] - 1):
             local_patch = distance_map[y-1:y+2, x-1:x+2]
             if distance_map[y, x] == np.max(local_patch) and distance_map[y, x] > 0:
-                centerline_map[y, x] = True
-    
-    return centerline_map
+                maximum_map[y, x] = True
+    return maximum_map
 
-
-def fit_parabola_1d(values):
-    """
-    Fits a 1D parabola to one point and its two neighbors and finds the subpixel maximum location.
+def get_circumcenter(p1, p2, p3):
+    """Calculate circumcenter of triangle defined by three points"""
+    t = np.array([[p1[0], p2[0], p3[0]], 
+                  [p1[1], p2[1], p3[1]]])
     
-    Args:
-        values: array-like
-            Three values [f(-1), f(0), f(1)] representing function values at x = -1, 0, 1
+    # Check if triangle is degenerate
+    a = np.sqrt((t[0,0] - t[0,1])**2 + (t[1,0] - t[1,1])**2)
+    b = np.sqrt((t[0,1] - t[0,2])**2 + (t[1,1] - t[1,2])**2)
+    c = np.sqrt((t[0,2] - t[0,0])**2 + (t[1,2] - t[1,0])**2)
+    bot = (a + b + c) * (-a + b + c) * (a - b + c) * (a + b - c)
+    if bot <= 0.0:
+        print("Degenerate triangle detected, circumcenter cannot be calculated.")
+        return None
+    
+    # Calculate squared distances and numerator terms
+    f = np.zeros(2)
+    f[0] = (t[0,1] - t[0,0])**2 + (t[1,1] - t[1,0])**2
+    f[1] = (t[0,2] - t[0,0])**2 + (t[1,2] - t[1,0])**2
+    
+    top = np.zeros(2)
+    top[0] = (t[1,2] - t[1,0]) * f[0] - (t[1,1] - t[1,0]) * f[1]
+    top[1] = -(t[0,2] - t[0,0]) * f[0] + (t[0,1] - t[0,0]) * f[1]
+    
+    det = ((t[1,2] - t[1,0]) * (t[0,1] - t[0,0]) - 
+           (t[1,1] - t[1,0]) * (t[0,2] - t[0,0]))
+    
+    if abs(det) < 1e-10:
+        print("Determinant is too small, circumcenter cannot be calculated.")
+        return None
         
-    Returns:
-        x_max: float
-            Subpixel offset from the center (x=0) where the maximum occurs
-        max_value: float
-            Interpolated maximum value of the parabola at x_max
-    """
-    # Unpack values in center and neighbors
-    f_minus, f_center, f_plus = values
-    
-    # Solve for A, B, C
-    A = (f_plus + f_minus - 2*f_center) / 2
-    B = (f_plus - f_minus) / 2
-    C = f_center
-    
-    # Maximum at x = -B/(2A)
-    if A < 0:
-        x_max = -B / (2 * A)
-        max_value = A * x_max * x_max + B * x_max + C  # f(x_max)
-        return x_max, max_value
+    center = np.zeros(2)
+    center[0] = t[0,0] + 0.5 * top[0] / det
+    center[1] = t[1,0] + 0.5 * top[1] / det
+    return center
 
 
-def interpolate_centroid(x, y, indices):
+def interpolate_circumcenter(x, y, indices, point_usage=None):
     """
-    Calculates subpixel vessel center using EDT indices and perpendicular direction.
+    Calculates vessel center using circumcenter of three boundary points.
+    Falls back to centroid if circumcenter calculation fails.
     
     Args:
         x: int
@@ -86,157 +67,153 @@ def interpolate_centroid(x, y, indices):
             Y-coordinate of the maximum point
         indices: np.array (3D)
             EDT indices map giving closest boundary point for each pixel
-        
+        point_usage: dict, optional
+            Dictionary to track how many times each point is used
+            
     Returns:
-        center_x: float
-            X-coordinate of the interpolated centroid
-        center_y: float
-            Y-coordinate of the interpolated centroid
-        bx: int
-            X-coordinate of the closest boundary point
-        by: int
-            Y-coordinate of the closest boundary point
+        dict: Analysis results containing:
+            - subpixelCenter: array [x,y] coordinates of center
+            - boundary_points: list of three boundary points used
     """
-    # Get closest boundary point (B)
-    by = indices[0, y, x]
-    bx = indices[1, y, x]
+    kernel = np.array([
+        [-1,-1], [-1,0], [-1,1],
+        [0,-1],          [0,1],
+        [1,-1],  [1,0],  [1,1]
+    ])
     
-    # Calculate normalized perpendicular vector
-    dx = bx - x
-    dy = by - y
-    length = np.sqrt(dx*dx + dy*dy)
+    i_c_y = indices[0, y, x]
+    i_c_x = indices[1, y, x]
     
-    # Get perpendicular direction
-    perp_x = -dy/length
-    perp_y = dx/length
+    v_c = np.array([i_c_x - x, i_c_y - y])
+    v_c_norm = np.linalg.norm(v_c)
+    if v_c_norm > 0:
+        v_c = v_c / v_c_norm
     
-    # Get opposite points
-    c1x = int(x + perp_x)
-    c1y = int(y + perp_y)
-    c2x = int(x - perp_x)
-    c2y = int(y - perp_y)
+    points_data = [] 
     
-    # Get their closest boundary points
-    c1bx = indices[1, c1y, c1x]
-    c1by = indices[0, c1y, c1x]
-    c2bx = indices[1, c2y, c2x]
-    c2by = indices[0, c2y, c2x]
+    for k_y, k_x in kernel:
+        ny, nx = y + k_y, x + k_x
+        if (0 <= ny < indices.shape[1] and 0 <= nx < indices.shape[2]):
+            i_n_y = indices[0, ny, nx]
+            i_n_x = indices[1, ny, nx]
+            v_i = np.array([i_n_x - x, i_n_y - y])
+            v_i_norm = np.linalg.norm(v_i)
+            if v_i_norm > 0:
+                v_i = v_i / v_i_norm
+                dot_product = -np.dot(v_c, v_i) # Negative scalar product is max when vectors are opposite
+                points_data.append((dot_product, (i_n_x, i_n_y))) # For each indices point of each neighbor store its scalar product
     
-    # Calculate centroid
-    center_x = (c1bx + c2bx + bx) / 3
-    center_y = (c1by + c2by + by) / 3
+    results = {
+        'subpixelCenter': None,
+        'boundary_points': None
+    }
     
-    return center_x, center_y, bx, by
-
-
-def extract_displacement_map(indices, maxima_map):
-    """
-    Creates displacement vectors from maxima to their interpolated centers.
-    
-    Args:
-        indices: np.array (3D)
-            EDT indices map giving closest boundary point for each pixel
-        maxima_map: np.array (2D)
-            Binary map of maxima positions
+    if len(points_data) >= 2:
+        points_data.sort(reverse=True)  # Ordered by scalar product in descending order
+        unique_points = []
+        seen_coords = set()
         
-    Returns:
-        displacement_map: np.array (2D, 2)
-            Vector field of displacements (dy, dx) for each maximum
-    """
-    # displacement_map is a 3D array where each pixel in the 2D maxima_map has a corresponding 2D vector (dy, dx)
-    displacement_map = np.zeros((*maxima_map.shape, 2), dtype=float) 
+        for dot_product, coords in points_data:
+            if coords not in seen_coords: # If the coordinates are already in the list, skip them
+                unique_points.append(coords)  # Store the coordinates of the point with the maximum scalar product
+                seen_coords.add(coords) 
+                if len(unique_points) == 2:  # Stop when we have two different points with maximum scalar product
+                    break
+        
+        if len(unique_points) == 2:
+            i_1 = np.array(unique_points[0])
+            i_2 = np.array(unique_points[1])
+            i_c = np.array([i_c_x, i_c_y])
+            if (i_1 == i_2).all():
+                print(f"Warning: Two points are identical: i_1 and i_2")
+            elif (i_1 == i_c).all():
+                print(f"Warning: Two points are identical: i_1 and i_c")
+            elif (i_2 == i_c).all():
+                print(f"Warning: Two points are identical: i_2 and i_c")
+            
+            subpixelCenter = get_circumcenter(i_1, i_2, i_c)
+            
+            if point_usage is not None:
+                for point in [tuple(i_1), tuple(i_2), tuple(i_c)]:
+                    point_usage[point] = point_usage.get(point, 0) + 1
+            
+            results['subpixelCenter'] = subpixelCenter
+            results['boundary_points'] = [i_1, i_2, i_c]
     
-    y_indices, x_indices = np.where(maxima_map)
-    for y, x in zip(y_indices, x_indices):
-        if y > 0 and y < maxima_map.shape[0]-1 and x > 0 and x < maxima_map.shape[1]-1:
-            center_x, center_y, _, _ = interpolate_centroid(x, y, indices)
-            displacement_map[y, x] = [center_y - y, center_x - x] # (dy, dx) for each maximum
+    return results
 
+def extract_displacement_map(maxima_map, analysis_data):
+    """
+    Creates displacement vectors from discrete maxima to their subpixel centers.
+    Each vector represents the shift from integer to floating-point coordinates.
+    """
+    displacement_map = np.zeros((*maxima_map.shape, 2), dtype=float)
+    
+    for (y, x), data in analysis_data.items():
+        if data['subpixelCenter'] is not None:
+            subpixelCenter = data['subpixelCenter']
+            displacement_map[y, x] = [
+                subpixelCenter[1] - y,  # vertical displacement
+                subpixelCenter[0] - x   # horizontal displacement
+            ]
+            
     return displacement_map
 
-
-def calculate_caliber_map(indices, maxima_map):
+def calculate_caliber_map(indices, maxima_map, analysis_data):
     """
-    Calculates vessel diameters and centroids using distances to boundary points.
-    
-    Args:
-        indices: np.array (3D)
-            EDT indices map giving closest boundary point for each pixel
-        maxima_map: np.array (2D)
-            Binary map of maxima positions
-        
-    Returns:
-        radius_map: np.array (2D, float)
-            Map of vessel radii at maximum positions
-        caliber_map: np.array (2D, float)
-            Map of vessel diameters at maximum positions
-        centroids: list of tuple
-            List of (center_x, center_y, boundary_x, boundary_y) for each maximum
+    Calculates vessel caliber using distance from subpixel center to closest boundary.
+    Uses EDT indices to find the nearest boundary point for each maximum.
     """
     caliber_map = np.zeros_like(maxima_map, dtype=float)
     radius_map = np.zeros_like(maxima_map, dtype=float)
-    y_indices, x_indices = np.where(maxima_map)
-    centroids = []
     
-    for y, x in zip(y_indices, x_indices):
-        if y > 0 and y < maxima_map.shape[0]-1 and x > 0 and x < maxima_map.shape[1]-1:
-            center_x, center_y, bx, by = interpolate_centroid(x, y, indices)
-            radius = np.sqrt((center_y - y)**2 + (center_x - x)**2)
+    for (y, x), data in analysis_data.items():
+        if data['subpixelCenter'] is not None:
+            subpixelCenter = data['subpixelCenter']
+            # For each discrete maximum store its indices point
+            boundary_y = indices[0, y, x]  # y-coord of nearest boundary
+            boundary_x = indices[1, y, x]  # x-coord of nearest boundary
+            
+            # Distance from subpixel center to nearest boundary
+            radius = np.sqrt((subpixelCenter[1] - boundary_y)**2 + 
+                           (subpixelCenter[0] - boundary_x)**2)
+            
             radius_map[y, x] = radius
-            caliber = 2 * np.sqrt((center_y - by)**2 + (center_x - bx)**2)
-            caliber_map[y, x] = caliber
-            centroids.append((center_x, center_y, bx, by))
+            caliber_map[y, x] = 2 * radius
     
-    return radius_map, caliber_map, centroids
-
+    return radius_map, caliber_map
 
 def analysis_stage(binary_image, target_resolution=None):
-    """
-    Performs vessel analysis at a specified target resolution.
-    
-    Args:
-        binary_image: np.array (2D)
-            Binary vessel map where True indicates vessel presence
-        target_resolution: tuple (height, width) or None
-            Desired output resolution in pixels. If None, uses input image shape
-        
-    Returns:
-        dict: Analysis results containing:
-            distance_map: np.array (2D)
-                Distance transform map at target resolution
-            indices: np.array (3D)
-                EDT indices map giving closest boundary point for each pixel
-            maxima_map: np.array (2D, bool)
-                Binary map of vessel centers at target resolution
-            displacement_map: np.array (3D)
-                Vector field of displacements (dy, dx) for each maximum
-            radius_map: np.array (2D)
-                Map of vessel radii at maximum positions
-            caliber_map: np.array (2D)
-                Map of vessel diameters at maximum positions
-            resolution: tuple (height, width)
-                Resolution of output maps
-    """
-    
+    """Performs vessel analysis at a specified target resolution"""
     if target_resolution is None:
         target_resolution = binary_image.shape
     
-    # Calculate resize factor
     zoom_y = target_resolution[0] / binary_image.shape[0]
     zoom_x = target_resolution[1] / binary_image.shape[1]
     
-    if zoom_y != 1.0 or zoom_x != 1.0: #
+    if zoom_y != 1.0 or zoom_x != 1.0:
         resized_image = zoom(binary_image.astype(float), (zoom_y, zoom_x), order=1)
-        resized_image = resized_image > 0.5  # Binarize the image again
+        resized_image = resized_image > 0.5
     else:
         resized_image = binary_image
     
     distance_map, indices = distance_transform_edt(resized_image, return_indices=True)
     maxima_map = extract_vessel_centers_local_maxima(distance_map)
-    displacement_map = extract_displacement_map(indices, maxima_map)
-    radius_map, caliber_map, _ = calculate_caliber_map(indices, maxima_map)
     
-    # Normalize maps with the new resolution
+    # Calculate all data once and store in dictionary
+    analysis_data = {}
+    point_usage = {}
+    y_indices, x_indices = np.where(maxima_map)
+    
+    for y, x in zip(y_indices, x_indices): # For each maximum point
+        if y > 0 and y < maxima_map.shape[0]-1 and x > 0 and x < maxima_map.shape[1]-1:
+            results = interpolate_circumcenter(x, y, indices, point_usage)
+            analysis_data[(y, x)] = results # Store its subpixel center and boundary points from interpolation
+
+
+    displacement_map = extract_displacement_map(maxima_map, analysis_data)
+    radius_map, caliber_map = calculate_caliber_map(indices, maxima_map, analysis_data)
+    
     avg_zoom = (zoom_x + zoom_y) / 2
     distance_map = distance_map / avg_zoom
     radius_map = radius_map / avg_zoom
@@ -250,5 +227,8 @@ def analysis_stage(binary_image, target_resolution=None):
         'displacement_map': displacement_map,
         'radius_map': radius_map,
         'caliber_map': caliber_map,
-        'resolution': target_resolution
+        'resolution': target_resolution,
+        'analysis_data': analysis_data,
+        'point_usage': point_usage
     }
+

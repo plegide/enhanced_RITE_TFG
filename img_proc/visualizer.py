@@ -2,149 +2,79 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from skimage import io
+from imProc import interpolate_circumcenter
 
 
-def plot_vessel_calibers_scatter(maxima_map, displacement_map):
-    """
-    Creates a scatter plot of vessel positions at subpixel resolution.
-    
-    Args:
-        maxima_map: np.array (2D)
-            Binary map of maxima positions
-        displacement_map: np.array (2D, 2)
-            Vector field of displacements
-    """
-    
-    # Get subpixel centers
+def plot_vessel_calibers_scatter(maxima_map, displacement_map, indices, binary_image, analysis_data, point_usage):
+    """Creates scatter plot of vessel positions with boundary points"""
     y_indices, x_indices = np.where(maxima_map > 0)
-    dy = displacement_map[y_indices, x_indices, 0]
-    dx = displacement_map[y_indices, x_indices, 1]
-    x_subpixel = x_indices + dx
-    y_subpixel = y_indices + dy
+    centers = []
+    boundary_points_list = []
+    point_colors = []
     
-    # Dark background and white fixed size points
+    colors = np.random.rand(len(x_indices), 3)
+    
+    for i, (y, x) in enumerate(zip(y_indices, x_indices)):
+        data = analysis_data.get((y, x), {})
+        if data.get('subpixelCenter') is not None:  # Changed from 'center' to 'subpixelCenter'
+            centers.append(data['subpixelCenter'])
+            for point in data['boundary_points']:
+                boundary_points_list.append(point)
+                point_colors.append(colors[i])
+    
+    centers = np.array(centers) if centers else np.array([]).reshape(0, 2)
+    boundary_points = np.array(boundary_points_list) if boundary_points_list else np.array([]).reshape(0, 2)
+    
+    # Setup plot with layers
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.set_facecolor('black')
     fig.patch.set_facecolor('black')
     
-    scatter = ax.scatter(x_subpixel, y_subpixel,
-                        s=20,
-                        c='white',
-                        alpha=0.6)
+    # Layer 1: Binary vessel map
+    ax.imshow(binary_image, cmap='binary_r', alpha=1.0, zorder=1)
+    
+    # Layer 2: Colored maxima
+    colored_maxima = np.zeros(maxima_map.shape + (3,))
+    for i, (y, x) in enumerate(zip(y_indices, x_indices)):
+        colored_maxima[y, x] = colors[i]
+    
+    ax.imshow(colored_maxima, alpha=0.7,
+              extent=(-0.5, maxima_map.shape[1]-0.5, 
+                     maxima_map.shape[0]-0.5, -0.5),
+              zorder=2)
+    
+    # Layer 3: Boundary points
+    if len(boundary_points) > 0:
+        regular_mask = [point_usage[tuple(point)] == 1 for point in boundary_points]
+        shared_mask = [point_usage[tuple(point)] > 1 for point in boundary_points]
+        
+        if any(regular_mask):
+            ax.scatter(boundary_points[regular_mask][:, 0], 
+                      boundary_points[regular_mask][:, 1],
+                      marker='.', s=15,
+                      c=np.array(point_colors)[regular_mask],
+                      alpha=0.5, zorder=3)
+        
+        if any(shared_mask):
+            shared_points = boundary_points[shared_mask]
+            ax.scatter(shared_points[:, 0], shared_points[:, 1],
+                      marker='o', s=20,
+                      c='white', alpha=0.8, zorder=4)
+            
+            print("\nShared boundary points:")
+            for point in shared_points:
+                print(f"Point {point} is used by {point_usage[tuple(point)]} centers")
+    
+    # Layer 4: Centers
+    if len(centers) > 0:
+        ax.scatter(centers[:, 0], centers[:, 1],
+                  marker='x', s=20,
+                  c='white', linewidth=0.5, zorder=5)
     
     ax.set_title(f'Vessel Positions ({len(x_indices)} points)', color='white')
-    ax.tick_params(colors='white')
-    
-    # Match image coordinates
-    ax.invert_yaxis()  
-    
+    ax.set_xlim(-0.5, maxima_map.shape[1]-0.5)
+    ax.set_ylim(maxima_map.shape[0]-0.5, -0.5)
     plt.tight_layout()
-    plt.show()
-
-
-def plot_vessel_displacements_quiver(maxima_map, displacement_map, indices):
-    """
-    Creates a quiver plot showing vectors from subpixel vessel centers to boundary points.
-    
-    Args:
-        maxima_map: np.array (2D)
-            Binary map of maxima positions
-        displacement_map: np.array (2D, 2)
-            Vector field of displacements
-        indices: np.array (3D)
-            EDT indices map giving closest boundary point for each pixel
-    """
-
-    y_indices, x_indices = np.where(maxima_map > 0)
-    dy = displacement_map[y_indices, x_indices, 0]
-    dx = displacement_map[y_indices, x_indices, 1]
-    x_subpixel = x_indices + dx
-    y_subpixel = y_indices + dy
-    
-    # indices contains the closest boundary points
-    by = indices[0, y_indices, x_indices]
-    bx = indices[1, y_indices, x_indices]
-    
-    vector_dx = bx - x_subpixel
-    vector_dy = by - y_subpixel
-    vector_lengths = np.sqrt(vector_dx**2 + vector_dy**2)
-    
-    # Debug and filter vectors with very small lengths
-    print(f"Vector lengths: min={vector_lengths.min():.3f}, max={vector_lengths.max():.3f}")
-    print(f"Number of small vectors (<0.1): {np.sum(vector_lengths < 0.1)}")
-    valid_vectors = vector_lengths > 0.1
-    x_subpixel = x_subpixel[valid_vectors]
-    y_subpixel = y_subpixel[valid_vectors]
-    vector_dx = vector_dx[valid_vectors]
-    vector_dy = vector_dy[valid_vectors]
-    vector_lengths = vector_lengths[valid_vectors]
-    
-    # Plot with dark background and coloured vectors depending on length
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.set_facecolor('black')
-    fig.patch.set_facecolor('black')
-    
-    quiver = ax.quiver(x_subpixel, y_subpixel,
-                      vector_dx, vector_dy,
-                      vector_lengths,
-                      cmap='viridis',
-                      width=0.003,
-                      scale=2,
-                      scale_units='xy')
-    
-    cbar = plt.colorbar(quiver, ax=ax, label='Vector Length (Radius)')
-    cbar.ax.yaxis.set_tick_params(color='white')
-    cbar.ax.yaxis.label.set_color('white')
-    ax.set_title('Vessel Center to Boundary Vectors', color='white')
-    ax.tick_params(colors='white')
-    
-    # Match image coordinates
-    ax.invert_yaxis()  
-
-    plt.show()
-
-
-def plot_vessel_circles(radius_map, displacement_map):
-    """
-    Creates a visualization with circles representing actual vessel sizes.
-    
-    Args:
-        radius_map: np.array (2D)
-            Map of vessel radius at maximum positions
-        displacement_map: np.array (2D, 2)
-            Vector field of displacements
-    """
-    
-    y_indices, x_indices = np.where(radius_map > 0)
-    radius = radius_map[y_indices, x_indices]
-    
-    # Background and white circles
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.set_facecolor('black')
-    fig.patch.set_facecolor('black')
-    
-    # Create circles with radius map in subpixel centers
-    for i, (x, y, r) in enumerate(zip(x_indices, y_indices, radius)):
-        dy = displacement_map[y, x, 0]
-        dx = displacement_map[y, x, 1]
-        center_x = x + dx
-        center_y = y + dy
-        
-        circle = plt.Circle((center_x, center_y), 
-                          radius=r,
-                          fill=False, 
-                          color='white',
-                          alpha=0.6,
-                          linewidth=1)
-        ax.add_patch(circle)
-    
-    ax.set_title('Vessel Calibers as Circles', color='white')
-    ax.tick_params(colors='white')
-    ax.axis('equal')
-    
-    # Match image coordinates
-    ax.invert_yaxis()  
-
     plt.show()
 
 
