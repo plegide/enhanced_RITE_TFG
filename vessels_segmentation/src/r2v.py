@@ -65,10 +65,20 @@ def to_numpy(torch_img):
         np_img = np_img.transpose(1,2,0)
     return np_img
 
-def save_to_csv(data, filepath):
-    with open(filepath, 'a') as file:
-        writer = csv.writer(file)
-        writer.writerows(data)
+def save_to_csv(data, filepath, write_header=False):
+
+    file_exists = os.path.exists(filepath)
+    
+    if write_header and not file_exists: # Write the header when creating the file
+        with open(filepath, 'w') as file:
+            writer = csv.writer(file)
+            writer.writerow(data[0])
+            if len(data) > 1: # Rest of the data
+                writer.writerows(data[1:])
+    else: # Append data
+        with open(filepath, 'a') as file:
+            writer = csv.writer(file)
+            writer.writerows(data)
 
 
 
@@ -97,22 +107,21 @@ def learning_curves(training, validation, outfile):
 
 class R2Vessels:
     def __init__(self, config, n=64):
-
         self.set_cuda_device(config.gpu_id)
 
-        self.loss = nn.BCEWithLogitsLoss(reduce=False)
+        self.loss = nn.BCEWithLogitsLoss(reduce=False) #Binary
+        self.regression_loss = nn.MSELoss(reduce=False) #Regression
 
         if config.pretrained_path is None:
-            self.net = UNet(input_ch=3, output_ch=1, base_ch=n).to(self.device)
+            self.net = UNet(input_ch=3, output_ch=4, base_ch=n).to(self.device)
             self.net.initialize()
         else:
             pretrained = UNet(input_ch=3, output_ch=config.pre_output_chs, base_ch=n).to(self.device)
             load_model(pretrained, config.pretrained_path)
-            pretrained.outconv = nn.Conv2d(64,1,1,bias=True).to(self.device)
+            pretrained.outconv = nn.Conv2d(64,4,1,bias=True).to(self.device)
             init.kaiming_normal(pretrained.outconv.weight.data, a=0, mode='fan_out', nonlinearity='sigmoid')
             init.constant(pretrained.outconv.bias.data, 0)
             self.net = pretrained
-
 
     def set_cuda_device(self, gpu_id, no_cuda_ok=False):
         if torch.cuda.is_available():
@@ -146,20 +155,26 @@ class R2Vessels:
 
             _, data = next(self.r2v_iterator)
 
-            retino, vessels, mask = (x.to(self.device, non_blocking=True) for x in data)
+            vessels, mask, maxima, displacement, radius = (x.to(self.device, non_blocking=True) for x in data)
 
             self.optimizer.zero_grad()
 
-            pred_vessels = self.net(retino)
+            pred = self.net(vessels)
+            
+            # Each prediction in a different channel
+            pred_maxima = pred[:,0:1,:,:]
+            pred_displacement = pred[:,1:3,:,:]
+            pred_radius = pred[:,3:4,:,:]
 
-            loss = torch.mean(self.loss(pred_vessels, vessels))
-#            loss = torch.mean(self.loss(pred_vessels[mask>0], vessels[mask>0]))
+            binary_loss = torch.mean(self.loss(pred_maxima, maxima))
+            displacement_loss = torch.mean(self.regression_loss(pred_displacement, displacement))
+            radius_loss = torch.mean(self.regression_loss(pred_radius, radius))
+            
+            loss = binary_loss + displacement_loss + 2.0 * radius_loss
+
             loss.backward()
-
             self.optimizer.step()
-
             total_loss += loss.item()
-
             self.iter += 1
 
         return [total_loss/number_iters]
@@ -176,17 +191,31 @@ class R2Vessels:
             k = _data[0].numpy()[0]
             data = _data[1]
 
-            retino, vessels, mask = data[0].cuda(non_blocking=True), data[1].cuda(non_blocking=True), \
-            data[2].cuda(non_blocking=True)
+            vessels, mask, maxima, displacement, radius = (data[0].cuda(non_blocking=True), 
+                                                         data[1].cuda(non_blocking=True),
+                                                         data[2].cuda(non_blocking=True),
+                                                         data[3].cuda(non_blocking=True),
+                                                         data[4].cuda(non_blocking=True))
 
-            pred_vessels = self.net(retino)
+            pred = self.net(vessels)
 
-            #print(k, _data[0])
+            pred_maxima = pred[:,0:1,:,:]
+            pred_displacement = pred[:,1:3,:,:]
+            pred_radius = pred[:,3:4,:,:]
+
+            binary_loss = torch.mean(self.loss(pred_maxima, maxima))
+            displacement_loss = torch.mean(self.regression_loss(pred_displacement, displacement))
+            radius_loss = torch.mean(self.regression_loss(pred_radius, radius))
+            
+            loss = binary_loss + displacement_loss + 2.0 * radius_loss
+
             if prefix_to_save is not None:
-                save_npimage(to_numpy((F.sigmoid(pred_vessels)).data.cpu()), prefix_to_save + str(k) + '.jpg')
-
-            loss = torch.mean(self.loss(pred_vessels, vessels))
-#            loss = torch.mean(self.loss(pred_vessels[mask>0], vessels[mask>0]))
+                save_npimage(to_numpy((F.sigmoid(pred_maxima)).data.cpu()), prefix_to_save + str(k) + '.jpg')
+                # Save npz prediction
+                np.savez(prefix_to_save + str(k) + '_pred.npz',
+                        maxima=torch.sigmoid(pred_maxima).cpu().numpy()[0,0],
+                        displacement=pred_displacement.cpu().numpy()[0],
+                        radius=pred_radius.cpu().numpy()[0,0])
 
             total_loss += loss.item()
     
@@ -228,7 +257,7 @@ class R2Vessels:
         valid_period = config.epoch_size
 
         save_to_csv([['iter','best_loss']], \
-                     os.path.join(output_folder, 'best_loss.csv'))
+                     os.path.join(output_folder, 'best_loss.csv'), write_header=True)
 
         train_loss = list()
         valid_loss = list()
@@ -273,7 +302,7 @@ class R2Vessels:
             is_best = check_is_best(valid_loss[-1][1])                              
             if is_best:
                 save_to_csv([[str(x) for x in valid_loss[-1]]], \
-                             os.path.join(output_folder, 'best_loss.csv'))   
+                             os.path.join(output_folder, 'best_loss.csv'), write_header=False)   
                 save_model(self.net, output_folder + '/generator_best.pth')  
 
             # Run scheduler                
@@ -283,8 +312,8 @@ class R2Vessels:
 
             # Save
             if save:
-                save_to_csv(train_loss, os.path.join(output_folder, 'train_loss.csv'))
-                save_to_csv(valid_loss, os.path.join(output_folder, 'test_loss.csv'))
+                save_to_csv(train_loss, os.path.join(output_folder, 'train_loss.csv'), write_header=False)
+                save_to_csv(valid_loss, os.path.join(output_folder, 'test_loss.csv'), write_header=False)
                 all_train_loss += train_loss
                 all_valid_loss += valid_loss
                 train_loss = []
@@ -293,12 +322,12 @@ class R2Vessels:
             
         # Final saving
         if len(train_loss)>0:
-            save_to_csv(train_loss, os.path.join(output_folder, 'train_loss.csv'))
+            save_to_csv(train_loss, os.path.join(output_folder, 'train_loss.csv'), write_header=False)
         if len(valid_loss)>0:
-            save_to_csv(valid_loss, os.path.join(output_folder, 'test_loss.csv'))
+            save_to_csv(valid_loss, os.path.join(output_folder, 'test_loss.csv'), write_header=False)
 
         save_model(self.net, output_folder + '/generator_last.pth')
         #save_opt(self.optimizer, path_to_save + '/optimizer_last.pth')
         learning_curves(all_train_loss, all_valid_loss, output_folder + '/learning_curves.svg')
 
-        return 
+        return

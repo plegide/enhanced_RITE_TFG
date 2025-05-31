@@ -181,3 +181,7 @@ tfg_env
 
 # RESULTS
 results
+
+geom_vessels_segmentation
+geom_vessels_segmentation.zip
+img_proc.zip

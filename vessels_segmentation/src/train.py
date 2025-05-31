@@ -56,15 +56,25 @@ class SubsetRandomSampler(Sampler):
         return len(self.indices)
 
 
-def save_to_csv(data, filepath):
-    with open(filepath, 'a') as file:
-        writer = csv.writer(file)
-        writer.writerows(data)
+def save_to_csv(data, filepath, write_header=False):
+
+    file_exists = os.path.exists(filepath)
+    
+    if write_header and not file_exists: # Write the header when creating the file
+        with open(filepath, 'w') as file:
+            writer = csv.writer(file)
+            writer.writerow(data[0])
+            if len(data) > 1: # Rest of the data
+                writer.writerows(data[1:])
+    else: # Append data
+        with open(filepath, 'a') as file:
+            writer = csv.writer(file)
+            writer.writerows(data)
         
 
 def create_dataloaders(Dataset, datapath, train_idx, test_idx, transforms_train, transforms_test, target_pattern=None, orig_pattern=None, mask_pattern=None):
-    dataset_train = Dataset(datapath, target_pattern, orig_pattern, mask_pattern, transforms.Compose(transforms_train)) 
-    dataset_test = Dataset(datapath, target_pattern, orig_pattern, mask_pattern, transforms.Compose(transforms_test))
+    dataset_train = Dataset(datapath, orig_pattern, target_pattern, mask_pattern, transforms.Compose(transforms_train)) 
+    dataset_test = Dataset(datapath, orig_pattern, target_pattern, mask_pattern, transforms.Compose(transforms_test))
 
     train_sampler = SubsetRandomSampler(train_idx)
     test_sampler = SubsetSequentialSampler(test_idx)
@@ -89,9 +99,9 @@ def train(training_path, train_idx, test_idx):
                                                                      random_horizontal_flip,
                                                                      to_torch_tensors],
                                                     transforms_test=[VesselsDataset.drive_padding, to_torch_tensors],
-                                                    target_pattern='[0-9]+_manual1[.]gif',
-                                                    orig_pattern='[0-9]+_training[.]tif',
-                                                    mask_pattern='[0-9]+_test_mask[.]png')    
+                                                    orig_pattern='[0-9]+_training[.]tif',    # Imágenes de retina
+                                                    target_pattern='[0-9]+_geom[.]npz',      # Mapas geométricos
+                                                    mask_pattern='[0-9]+_test_mask[.]png')   # Máscaras ROI
      
     multimodel = R2Vessels(config)
     
@@ -105,7 +115,7 @@ def training_n_samples(data_path, experiment_path, experiment_number, experiment
     if not os.path.exists(experiment_path):
         os.makedirs(experiment_path)    
         
-    save_to_csv([['n','samples','elapsed_time']], os.path.join(experiment_path, 'times.csv'))
+    save_to_csv([['n','samples','elapsed_time']], os.path.join(experiment_path, 'times.csv'), write_header=True)
     
     samples = set(read_samples_idx(os.path.join(data_path, 'training.csv')))
 
@@ -134,7 +144,7 @@ def training_n_samples(data_path, experiment_path, experiment_number, experiment
         
         to_save = [[i,training_set, elapsed_time]]
         
-        save_to_csv(to_save, os.path.join(experiment_path, 'times.csv'))
+        save_to_csv(to_save, os.path.join(experiment_path, 'times.csv'), write_header=False)
          
 
 

@@ -69,7 +69,11 @@ if __name__ == "__main__":
     parser.add_argument('--save_images', action='store_true')
     parser.add_argument('--compute_pr', action='store_true')
     parser.add_argument('--synthesis_method', type=str, default='distance')
-
+    parser.add_argument('--use_gt_map', type=str, choices=['maxima', 'displacement', 'radius'],
+                        help='Use ground truth map instead of prediction for the specified map type')
+    parser.add_argument('--mask_gt_maxima', action='store_true',
+                    help='Use ground truth maxima as mask for prediction maxima')
+    
     args = parser.parse_args()
 
     DEVICE = 'cuda:'+str(args.device)
@@ -126,24 +130,39 @@ if __name__ == "__main__":
 
         img = img.unsqueeze(0).to(DEVICE)
 
-        # Forward pass through the network. 
+        # Forward pass through the network
         with torch.no_grad():
-            # Modify according to the network architecture in order to save the output of task OD/OC
-            prediction = network(img) #[:,4:7,:,:]
+            prediction = network(img)
         
-        # Erase padding and extract maps info
+        # Get predicted maps without padding
         pred_no_pad = prediction.squeeze(0)[:, pad[2]:-pad[3], pad[0]:-pad[1]]
-        maxima = pred_no_pad[0]
-        displacement = pred_no_pad[1:3]
-        print(displacement.shape)
-        radius = pred_no_pad[3]
         
+        # Load ground truth maps
+        geom_file = os.path.join(DATA_FOLDER, f'{id}_geom.npz')
+        geom_data = np.load(geom_file)
+        
+        # Initialize analysis_results with predicted maps
         analysis_results = {
-            'maxima_map': torch.sigmoid(maxima).cpu().numpy(),
-            'displacement_map': displacement.cpu().numpy(),
-            'radius_map': radius.cpu().numpy()
+            'maxima_map': torch.sigmoid(pred_no_pad[0]).cpu().numpy(),
+            'displacement_map': pred_no_pad[1:3].cpu().numpy(),
+            'radius_map': pred_no_pad[3].cpu().numpy()
         }
         
+        # Apply ground truth maxima mask
+        if args.mask_gt_maxima:
+            gt_maxima_mask = geom_data['maxima'] > 0
+            analysis_results['maxima_map'] = analysis_results['maxima_map'] * gt_maxima_mask
+        
+        # Replace specified map with ground truth
+        if args.use_gt_map == 'maxima':
+            analysis_results['maxima_map'] = geom_data['maxima']
+        elif args.use_gt_map == 'displacement':
+            # Reorganizar de [y,x,2] a [2,y,x]
+            displacement = geom_data['displacement']
+            analysis_results['displacement_map'] = np.transpose(displacement, (2,0,1))
+        elif args.use_gt_map == 'radius':
+            analysis_results['radius_map'] = geom_data['radius']
+
         # Synthesize
         synthetic_maps = synthesis_stage(
             analysis_results,
