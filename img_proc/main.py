@@ -11,8 +11,8 @@ from graphics import generate_all_graphics
 
 def process_test_images():
     # Define methods
-    analysis_methods = ['edt_subpixel', 'edt_non_subpixel', 'fmm_subpixel']
-    synthesis_methods = ['distance', 'or']
+    analysis_methods = ['fmm_subpixel']
+    synthesis_methods = ['distance']
     
     # Define directories using relative paths
     current_dir = Path(__file__).parent
@@ -86,6 +86,25 @@ def process_test_images():
             else:
                 print(f"Loading existing geometric maps from {geom_file}")
                 npz_data = np.load(geom_file)
+                
+                # Visualize maps
+                plt.figure(figsize=(10, 5))
+                
+                # Maxima map
+                plt.subplot(121)
+                plt.imshow(npz_data['maxima'], cmap='gray')
+                plt.title('Maxima Map')
+                plt.colorbar()
+                
+                # Radius map
+                plt.subplot(122)
+                plt.imshow(npz_data['radius'], cmap='jet')
+                plt.title('Radius Map')
+                plt.colorbar()
+                
+                plt.tight_layout()
+                plt.show()
+                
                 results = {
                     'displacement_map': npz_data['displacement'][1:],  # Skip zero channel
                     'maxima_map': npz_data['maxima'],

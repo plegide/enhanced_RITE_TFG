@@ -43,6 +43,21 @@ def save_npimage_fullrange(img, file):
 
 def save_image(img, file):
     io.imsave(file, (255*img).astype(np.uint8))
+    
+def save_error_map(error_map, filename, title):
+    """
+    Save error map with a colorbar showing the error scale
+    Args:
+        error_map: 2D numpy array with error values
+        filename: path where to save the image
+        title: title for the plot (e.g. 'Radius Error')
+    """
+    plt.figure(figsize=(10,8))
+    im = plt.imshow(error_map, cmap='viridis')
+    plt.colorbar(im, label='Error magnitude')
+    plt.title(title)
+    plt.savefig(filename, bbox_inches='tight', dpi=150)
+    plt.close()
 
 def to_numpy(torch_img):
     np_img = torch_img.numpy()
@@ -73,7 +88,9 @@ if __name__ == "__main__":
                         help='Use ground truth map instead of prediction for the specified map type')
     parser.add_argument('--mask_gt_maxima', action='store_true',
                     help='Use ground truth maxima as mask for prediction maxima')
-    
+    parser.add_argument('--save_error_maps', action='store_true',
+                   help='Save error maps for radius and displacement predictions')
+
     args = parser.parse_args()
 
     DEVICE = 'cuda:'+str(args.device)
@@ -83,6 +100,7 @@ if __name__ == "__main__":
     MODEL_FILE = args.model_file
     SAVE_IMAGES = args.save_images
     COMPUTE_PR = args.compute_pr
+    SAVE_ERROR_MAPS = args.save_error_maps
 
     os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
@@ -163,6 +181,25 @@ if __name__ == "__main__":
         elif args.use_gt_map == 'radius':
             analysis_results['radius_map'] = geom_data['radius']
 
+        if SAVE_ERROR_MAPS:
+            radius_error = np.abs(analysis_results['radius_map'] - geom_data['radius'])
+            save_error_map(radius_error, 
+                        RESULTS_FOLDER + '/' + id + '_radius_error.png',
+                        'Radius Error Map')
+            
+            # Reorganize from [y,x,2] to [2,y,x]
+            gt_displacement = np.transpose(geom_data['displacement'], (2,0,1))
+        
+            disp_x_error = np.abs(analysis_results['displacement_map'][0] - gt_displacement[0])
+            save_error_map(disp_x_error,
+                        RESULTS_FOLDER + '/' + id + '_displacement_x_error.png',
+                        'Displacement X Error Map')
+
+            disp_y_error = np.abs(analysis_results['displacement_map'][1] - gt_displacement[1])
+            save_error_map(disp_y_error,
+                        RESULTS_FOLDER + '/' + id + '_displacement_y_error.png',
+                        'Displacement Y Error Map')
+            
         # Synthesize
         synthetic_maps = synthesis_stage(
             analysis_results,
@@ -172,7 +209,7 @@ if __name__ == "__main__":
         prediction = synthetic_maps[args.synthesis_method]
         
         if SAVE_IMAGES:
-            save_npimage(prediction, RESULTS_FOLDER + '/' + id + '_prediction.jpg')           
+            save_npimage(prediction, RESULTS_FOLDER + '/' + id + '_prediction.png')           
 
         results += [[v[mask>0], prediction[mask>0]]]
 

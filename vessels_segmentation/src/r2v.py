@@ -101,10 +101,33 @@ def learning_curves(training, validation, outfile):
     fig.savefig(outfile)   # save the figure to file
     plt.close(fig)    # close the figure
 
+def learning_curves_components(train_maxima, train_displacement, train_radius,
+                             valid_maxima, valid_displacement, valid_radius, outfile):
+    plt.rcParams["figure.figsize"] = [16,9]
+    fig, ax1 = plt.subplots(nrows=1, ncols=1, sharex=True)  # create figure & 1 axis
+    
+    x_train_max, y_train_max = zip(*train_maxima)
+    x_train_disp, y_train_disp = zip(*train_displacement)
+    x_train_rad, y_train_rad = zip(*train_radius)
+    
+    ax1.plot(x_train_max, y_train_max, 'b', label='maxima train')
+    ax1.plot(x_train_disp, y_train_disp, 'g', label='displacement train')
+    ax1.plot(x_train_rad, y_train_rad, 'c', label='radius train')
 
+    x_valid_max, y_valid_max = zip(*valid_maxima)
+    x_valid_disp, y_valid_disp = zip(*valid_displacement)
+    x_valid_rad, y_valid_rad = zip(*valid_radius)
+    
+    ax1.plot(x_valid_max, y_valid_max, 'r', label='maxima valid')
+    ax1.plot(x_valid_disp, y_valid_disp, 'y', label='displacement valid')
+    ax1.plot(x_valid_rad, y_valid_rad, 'm', label='radius valid')
 
+    ax1.legend()
+    ax1.set_yscale('log')
 
-
+    fig.savefig(outfile)   # save the figure to file
+    plt.close(fig)    # close the figure
+    
 class R2Vessels:
     def __init__(self, config, n=64):
         self.set_cuda_device(config.gpu_id)
@@ -142,10 +165,31 @@ class R2Vessels:
         self.net.set_eval()
         return self.net(input_img)
     
+    def calculate_masked_mse(self, pred, target, mask):
+        """
+        Calculates MSE only at points where maxima exist (mask=1)
+        Args:
+            pred: network prediction
+            target: ground truth
+            mask: binary mask for maxima (1 where maximum exists, 0 elsewhere)
+        Returns:
+            Masked MSE loss averaged over valid points only
+        """
+        # Count number of valid points
+        num_valid_points = torch.sum(mask)
+        
+        if num_valid_points > 0:
+            # Calculate squared error only at maximum points
+            squared_error = ((pred - target) ** 2) * mask
+            return torch.sum(squared_error) / num_valid_points
+        return torch.tensor(0.0).to(self.device)
 
     def train_iters(self, r2v_loader, number_iters):
         self.net.train()
         total_loss = 0.0
+        total_maxima_loss = 0.0
+        total_displacement_loss = 0.0
+        total_radius_loss = 0.0
 
         len_r2v = len(r2v_loader)
 
@@ -166,24 +210,36 @@ class R2Vessels:
             pred_displacement = pred[:,1:3,:,:]
             pred_radius = pred[:,3:4,:,:]
 
-            binary_loss = torch.mean(self.loss(pred_maxima, maxima))
-            displacement_loss = torch.mean(self.regression_loss(pred_displacement, displacement))
-            radius_loss = torch.mean(self.regression_loss(pred_radius, radius))
+            # Binary loss for maxima using BCE
+            maxima_loss = torch.mean(self.loss(pred_maxima, maxima))
+            maxima_mask = (maxima > 0).float()
+            displacement_loss = self.calculate_masked_mse(pred_displacement, displacement, maxima_mask)
+            radius_loss = 3.0 * self.calculate_masked_mse(pred_radius, radius, maxima_mask)
             
-            loss = binary_loss + displacement_loss + 2.0 * radius_loss
-
+            loss = maxima_loss + displacement_loss + radius_loss
             loss.backward()
             self.optimizer.step()
+
             total_loss += loss.item()
+            total_maxima_loss += maxima_loss.item()
+            total_displacement_loss += displacement_loss.item()
+            total_radius_loss += radius_loss.item()
             self.iter += 1
 
-        return [total_loss/number_iters]
+        # Return both total and individual losses
+        return [total_loss/number_iters, 
+                total_maxima_loss/number_iters,
+                total_displacement_loss/number_iters,
+                total_radius_loss/number_iters]
 
 
     @torch.no_grad()
     def test(self, r2v_dataloader, prefix_to_save=None):
         self.net.eval()
         total_loss = 0.0
+        total_maxima_loss = 0.0
+        total_displacement_loss = 0.0
+        total_radius_loss = 0.0
 
         len_r2v = len(r2v_dataloader)
 
@@ -203,23 +259,24 @@ class R2Vessels:
             pred_displacement = pred[:,1:3,:,:]
             pred_radius = pred[:,3:4,:,:]
 
-            binary_loss = torch.mean(self.loss(pred_maxima, maxima))
-            displacement_loss = torch.mean(self.regression_loss(pred_displacement, displacement))
-            radius_loss = torch.mean(self.regression_loss(pred_radius, radius))
+            # Binary loss for maxima using BCE
+            maxima_loss = torch.mean(self.loss(pred_maxima, maxima))
+            maxima_mask = (maxima > 0).float()
+            displacement_loss = self.calculate_masked_mse(pred_displacement, displacement, maxima_mask)
+            radius_loss = 3.0 * self.calculate_masked_mse(pred_radius, radius, maxima_mask)
             
-            loss = binary_loss + displacement_loss + 2.0 * radius_loss
-
-            if prefix_to_save is not None:
-                save_npimage(to_numpy((F.sigmoid(pred_maxima)).data.cpu()), prefix_to_save + str(k) + '.jpg')
-                # Save npz prediction
-                np.savez(prefix_to_save + str(k) + '_pred.npz',
-                        maxima=torch.sigmoid(pred_maxima).cpu().numpy()[0,0],
-                        displacement=pred_displacement.cpu().numpy()[0],
-                        radius=pred_radius.cpu().numpy()[0,0])
+            loss = maxima_loss + displacement_loss + radius_loss
 
             total_loss += loss.item()
-    
-        return [total_loss/len_r2v]
+            total_maxima_loss += maxima_loss.item()
+            total_displacement_loss += displacement_loss.item()
+            total_radius_loss += radius_loss.item()
+
+        # Return both total and individual losses
+        return [total_loss/len_r2v,
+                total_maxima_loss/len_r2v,
+                total_displacement_loss/len_r2v,
+                total_radius_loss/len_r2v]
 
 
     def training(self, config, train_loader, valid_loader, output_folder):
@@ -261,8 +318,21 @@ class R2Vessels:
 
         train_loss = list()
         valid_loss = list()
+        train_maxima_loss = list()
+        train_displacement_loss = list()
+        train_radius_loss = list()
+        valid_maxima_loss = list()
+        valid_displacement_loss = list()
+        valid_radius_loss = list()
+        
         all_train_loss = list()
         all_valid_loss = list()
+        all_train_maxima_loss = list()
+        all_train_displacement_loss = list()
+        all_train_radius_loss = list()
+        all_valid_maxima_loss = list()
+        all_valid_displacement_loss = list()
+        all_valid_radius_loss = list()
 
         self.iter = 0
         epochs_count = 0
@@ -279,7 +349,18 @@ class R2Vessels:
             epochs_count += 1
 
             # Training one epoch
-            train_loss.append([self.iter+valid_period] + self.train_iters(train_loader, valid_period))
+            losses = self.train_iters(train_loader, valid_period)
+            train_loss.append([self.iter+valid_period, losses[0]])  # Total loss
+            train_maxima_loss.append([self.iter+valid_period, losses[1]])  # Maxima loss
+            train_displacement_loss.append([self.iter+valid_period, losses[2]])  # Displacement loss
+            train_radius_loss.append([self.iter+valid_period, losses[3]])  # Radius loss
+
+            # Validation
+            losses = self.test(valid_loader, prefix_to_save)
+            valid_loss.append([self.iter, losses[0]])  # Total loss
+            valid_maxima_loss.append([self.iter, losses[1]])  # Maxima loss
+            valid_displacement_loss.append([self.iter, losses[2]])  # Displacement loss 
+            valid_radius_loss.append([self.iter, losses[3]])  # Radius loss
 
             # Check and prepare saving
             if epochs_count % save_period == 0:
@@ -314,20 +395,60 @@ class R2Vessels:
             if save:
                 save_to_csv(train_loss, os.path.join(output_folder, 'train_loss.csv'), write_header=False)
                 save_to_csv(valid_loss, os.path.join(output_folder, 'test_loss.csv'), write_header=False)
+                
+                # Save component losses
+                save_to_csv(train_maxima_loss, os.path.join(output_folder, 'train_maxima_loss.csv'), write_header=False)
+                save_to_csv(train_displacement_loss, os.path.join(output_folder, 'train_displacement_loss.csv'), write_header=False)
+                save_to_csv(train_radius_loss, os.path.join(output_folder, 'train_radius_loss.csv'), write_header=False)
+                save_to_csv(valid_maxima_loss, os.path.join(output_folder, 'valid_maxima_loss.csv'), write_header=False)
+                save_to_csv(valid_displacement_loss, os.path.join(output_folder, 'valid_displacement_loss.csv'), write_header=False)
+                save_to_csv(valid_radius_loss, os.path.join(output_folder, 'valid_radius_loss.csv'), write_header=False)
+                
                 all_train_loss += train_loss
                 all_valid_loss += valid_loss
+                all_train_maxima_loss += train_maxima_loss
+                all_train_displacement_loss += train_displacement_loss
+                all_train_radius_loss += train_radius_loss
+                all_valid_maxima_loss += valid_maxima_loss
+                all_valid_displacement_loss += valid_displacement_loss
+                all_valid_radius_loss += valid_radius_loss
+                
+                # Clear lists
                 train_loss = []
                 valid_loss = []
+                train_maxima_loss = []
+                train_displacement_loss = []
+                train_radius_loss = []
+                valid_maxima_loss = []
+                valid_displacement_loss = []
+                valid_radius_loss = []
+                
+                # Generate learning curves
                 learning_curves(all_train_loss, all_valid_loss, output_folder + '/learning_curves.svg')
-            
+                learning_curves(all_train_loss, all_valid_loss, output_folder + '/learning_curves_total.svg')
+                learning_curves_components(
+                    all_train_maxima_loss, all_train_displacement_loss, all_train_radius_loss,
+                    all_valid_maxima_loss, all_valid_displacement_loss, all_valid_radius_loss,
+                    output_folder + '/learning_curves_components.svg')
+    
         # Final saving
         if len(train_loss)>0:
             save_to_csv(train_loss, os.path.join(output_folder, 'train_loss.csv'), write_header=False)
+            save_to_csv(train_maxima_loss, os.path.join(output_folder, 'train_maxima_loss.csv'), write_header=False)
+            save_to_csv(train_displacement_loss, os.path.join(output_folder, 'train_displacement_loss.csv'), write_header=False)
+            save_to_csv(train_radius_loss, os.path.join(output_folder, 'train_radius_loss.csv'), write_header=False)
+            
         if len(valid_loss)>0:
             save_to_csv(valid_loss, os.path.join(output_folder, 'test_loss.csv'), write_header=False)
+            save_to_csv(valid_maxima_loss, os.path.join(output_folder, 'valid_maxima_loss.csv'), write_header=False)
+            save_to_csv(valid_displacement_loss, os.path.join(output_folder, 'valid_displacement_loss.csv'), write_header=False)
+            save_to_csv(valid_radius_loss, os.path.join(output_folder, 'valid_radius_loss.csv'), write_header=False)
 
         save_model(self.net, output_folder + '/generator_last.pth')
-        #save_opt(self.optimizer, path_to_save + '/optimizer_last.pth')
-        learning_curves(all_train_loss, all_valid_loss, output_folder + '/learning_curves.svg')
+        learning_curves(all_train_loss, all_valid_loss, output_folder + '/learning_curves_total.svg')
+        learning_curves_components(
+            all_train_maxima_loss, all_train_displacement_loss, all_train_radius_loss,
+            all_valid_maxima_loss, all_valid_displacement_loss, all_valid_radius_loss,
+            output_folder + '/learning_curves_components.svg')
 
         return

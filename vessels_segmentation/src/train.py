@@ -99,7 +99,7 @@ def train(training_path, train_idx, test_idx):
                                                                      random_horizontal_flip,
                                                                      to_torch_tensors],
                                                     transforms_test=[VesselsDataset.drive_padding, to_torch_tensors],
-                                                    orig_pattern='[0-9]+_training[.]tif',    # Imágenes de retina
+                                                    orig_pattern='[0-9]+_training[.]tif',    # Retinografia
                                                     target_pattern='[0-9]+_geom[.]npz',      # Mapas geométricos
                                                     mask_pattern='[0-9]+_test_mask[.]png')   # Máscaras ROI
      
